@@ -231,49 +231,35 @@ def build_video_format_string(format_id, output_format, platform=None):
     """Build a resilient yt-dlp format string that keeps audio/video together"""
     if format_id in ['best', 'worst']:
         return format_id
-    
+
     prefers_h264 = platform_requires_h264(platform)
-    
+
     if prefers_h264:
-        # For social media platforms, prefer H264/AVC1 codec with MP4 container
-        preferred_videos = [
-            f"{format_id}[ext=mp4][vcodec^=avc1]",
-            f"{format_id}[vcodec^=avc1]",
-            "bestvideo[ext=mp4][vcodec^=avc1]",
-            "bestvideo[vcodec^=avc1]",
-            "bestvideo"
-        ]
-        preferred_audios = [
-            "bestaudio[ext=m4a]",
-            "bestaudio[acodec^=mp4a]",
-            "bestaudio[acodec^=aac]",
-            "bestaudio"
-        ]
-        return f"{'/'.join(preferred_videos)}+{'/'.join(preferred_audios)}/best"
-    
+        # For social media platforms, download the user-selected format with best audio.
+        # H264 conversion is handled post-download by ensure_compatible_video so we
+        # must NOT filter by codec here – that would silently ignore the user's choice.
+        return (
+            f"{format_id}+bestaudio[ext=m4a]/"
+            f"{format_id}+bestaudio[acodec^=mp4a]/"
+            f"{format_id}+bestaudio/"
+            f"{format_id}/"
+            f"bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/"
+            f"bestvideo[vcodec^=avc1]+bestaudio/"
+            f"best"
+        )
+
     if output_format == 'mp4':
-        # Prefer MP4-friendly video/audio combos to avoid incompatible merges
-        preferred_videos = [
-            f"{format_id}[ext=mp4][vcodec^=avc1]",
-            "bestvideo[ext=mp4][vcodec^=avc1]",
-            "bestvideo[vcodec^=avc1]"
-        ]
-        preferred_audios = [
-            "bestaudio[ext=m4a]",
-            "bestaudio[acodec^=mp4a]",
-            "bestaudio[acodec^=aac]"
-        ]
-        fallback_parts = [
-            "bestvideo[ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]",
-            "best[ext=mp4]",
-            "best"
-        ]
-        fallback_combo = "/".join(fallback_parts)
-        preferred_video_combo = "/".join(preferred_videos)
-        preferred_audio_combo = "/".join(preferred_audios)
-        preferred_combo = f"{preferred_video_combo}+{preferred_audio_combo}"
-        return f"{preferred_combo}/{fallback_combo}"
-    
+        # Prefer the exact user-selected format combined with best audio
+        return (
+            f"{format_id}+bestaudio[ext=m4a]/"
+            f"{format_id}+bestaudio[acodec^=mp4a]/"
+            f"{format_id}+bestaudio/"
+            f"{format_id}/"
+            f"bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+            f"best[ext=mp4]/"
+            f"best"
+        )
+
     fallback_combo = f"bestvideo[ext={output_format}]+bestaudio/bestvideo+bestaudio"
     return f'{format_id}+bestaudio/{fallback_combo}'
 
@@ -713,18 +699,11 @@ def perform_download(download_id, url, format_type, format_id, output_format, co
             if postprocessors:
                 ydl_opts['postprocessors'] = postprocessors
                 
-                # Add FFmpeg args for better compatibility
-                ffmpeg_args = []
+                # Add FFmpeg args for web optimisation (faststart only).
+                # H264 re-encoding for social media platforms is handled after
+                # download by ensure_compatible_video to avoid double-encoding.
                 if output_format == 'mp4':
-                    ffmpeg_args.extend(FASTSTART_ARGS)
-                    
-                    # For social media platforms, add compatibility args
-                    if platform_requires_h264(platform):
-                        ffmpeg_args.extend(MP4_COMPATIBLE_ARGS)
-                        ffmpeg_args.extend(SOCIAL_MEDIA_ARGS)
-                
-                if ffmpeg_args:
-                    ydl_opts['postprocessor_args'] = {'FFmpegVideoConvertor': ffmpeg_args}
+                    ydl_opts['postprocessor_args'] = {'FFmpegVideoConvertor': FASTSTART_ARGS}
         
         # Download the video
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
