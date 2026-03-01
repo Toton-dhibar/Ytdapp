@@ -263,6 +263,23 @@ def build_video_format_string(format_id, output_format, platform=None):
     fallback_combo = f"bestvideo[ext={output_format}]+bestaudio/bestvideo+bestaudio"
     return f'{format_id}+bestaudio/{fallback_combo}'
 
+def deduplicate_video_formats_by_height(video_formats, platform):
+    """For social media platforms, keep only the best format per resolution height."""
+    if not platform_requires_h264(platform):
+        return video_formats
+
+    seen = {}
+    for fmt in video_formats:
+        height = fmt.get('height') or 0
+        if height not in seen:
+            seen[height] = fmt
+        else:
+            # Prefer the format with the larger filesize (better quality)
+            if (fmt.get('filesize_approx') or 0) > (seen[height].get('filesize_approx') or 0):
+                seen[height] = fmt
+
+    return sorted(seen.values(), key=lambda x: x.get('height') or 0, reverse=True)
+
 def ensure_compatible_video(input_path, output_path, platform):
     """
     Use ffmpeg to ensure video is compatible with all players
@@ -272,6 +289,9 @@ def ensure_compatible_video(input_path, output_path, platform):
         # Build ffmpeg command for maximum compatibility
         cmd = ['ffmpeg', '-i', input_path]
         
+        # Limit to 2 threads to keep CPU usage low
+        cmd.extend(['-threads', '2'])
+
         # Add video codec settings for H264 baseline profile
         cmd.extend([
             '-c:v', 'libx264',
@@ -434,7 +454,10 @@ def get_formats():
                 video_formats.sort(key=lambda x: (x.get('height', 0), x.get('fps', 0)), reverse=True)
                 
                 # Sort audio formats by bitrate descending
-                audio_formats.sort(key=lambda x: x.get('abr', 0), reverse=True)
+                audio_formats.sort(key=lambda x: x.get('abr') or 0, reverse=True)
+                
+                # For social media platforms, deduplicate by resolution to reduce confusion
+                video_formats = deduplicate_video_formats_by_height(video_formats, platform)
                 
                 # If no separate audio formats found, create some basic options
                 if not audio_formats and video_formats:
@@ -452,8 +475,8 @@ def get_formats():
                     'title': info.get('title', 'Unknown'),
                     'duration': info.get('duration'),
                     'uploader': info.get('uploader'),
-                    'video_formats': video_formats[:30],  # Limit to top 30 formats
-                    'audio_formats': audio_formats[:15],  # Limit to top 15 formats
+                    'video_formats': video_formats[:15],  # Limit to top 15 formats
+                    'audio_formats': audio_formats[:10],  # Limit to top 10 formats
                     'thumbnail': info.get('thumbnail'),
                     'view_count': info.get('view_count'),
                     'description': info.get('description', '')[:500] if info.get('description') else ''
@@ -633,9 +656,10 @@ def perform_download(download_id, url, format_type, format_id, output_format, co
             'writethumbnail': False,
             'writeinfojson': False,
             'ignoreerrors': False,
-            'no_warnings': False,
+            'no_warnings': True,
             'merge_output_format': output_format,
             'prefer_ffmpeg': True,
+            'concurrent_fragment_downloads': 1,  # Limit parallel fragment downloads (saves RAM/CPU)
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             },
@@ -708,111 +732,108 @@ def perform_download(download_id, url, format_type, format_id, output_format, co
         # Download the video
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
-                # First, try to extract info to validate the URL
-                info = ydl.extract_info(url, download=False)
-                if not info:
+                # Perform the download in a single pass (avoids a redundant
+                # extract_info(download=False) call that wastes CPU/bandwidth
+                # and can cause format-ID expiration on time-limited platforms).
+                result = ydl.extract_info(url, download=True)
+                if not result:
                     download_progress[download_id] = {
                         'status': 'error',
                         'error': 'Could not extract video information'
                     }
                     return
-                
-                # Get the title for filename
-                title = info.get('title', 'video')
+
+                # Get the title for filename from the download result
+                title = result.get('title', 'video')
                 safe_filename = get_safe_filename(title, format_type, output_format)
-                
-                # Now perform the actual download
-                result = ydl.extract_info(url, download=True)
-                
-                if result:
-                    # Wait a moment for any post-processing to complete
-                    time.sleep(2)
-                    
-                    # Find the downloaded file
-                    files = [f for f in os.listdir(temp_dir) if os.path.isfile(os.path.join(temp_dir, f))]
-                    if files:
-                        # Sort by modification time to get the latest file
-                        files.sort(key=lambda x: os.path.getmtime(os.path.join(temp_dir, x)), reverse=True)
-                        downloaded_file = files[0]
-                        original_file_path = os.path.join(temp_dir, downloaded_file)
-                        
-                        # For social media platforms, ensure maximum compatibility
-                        final_file_path = original_file_path
-                        current_filename = downloaded_file
-                        
-                        if platform_requires_h264(platform) and format_type == 'video':
-                            # Create a compatibility-converted version
-                            converted_path = os.path.join(temp_dir, f"compat_{safe_filename}")
-                            if ensure_compatible_video(original_file_path, converted_path, platform):
-                                final_file_path = converted_path
-                                current_filename = f"compat_{safe_filename}"
-                                # Clean up original if conversion succeeded
-                                try:
-                                    os.remove(original_file_path)
-                                except:
-                                    pass
-                            else:
-                                # If conversion fails, try to use the original
+
+                # Brief wait for ffmpeg post-processing to finish writing the file
+                time.sleep(1)
+
+                # Find the downloaded file
+                files = [f for f in os.listdir(temp_dir) if os.path.isfile(os.path.join(temp_dir, f))]
+                if files:
+                    # Sort by modification time to get the latest file
+                    files.sort(key=lambda x: os.path.getmtime(os.path.join(temp_dir, x)), reverse=True)
+                    downloaded_file = files[0]
+                    original_file_path = os.path.join(temp_dir, downloaded_file)
+
+                    # For social media platforms, ensure maximum compatibility
+                    final_file_path = original_file_path
+                    current_filename = downloaded_file
+
+                    if platform_requires_h264(platform) and format_type == 'video':
+                        # Create a compatibility-converted version
+                        converted_path = os.path.join(temp_dir, f"compat_{safe_filename}")
+                        if ensure_compatible_video(original_file_path, converted_path, platform):
+                            final_file_path = converted_path
+                            current_filename = f"compat_{safe_filename}"
+                            # Clean up original if conversion succeeded
+                            try:
+                                os.remove(original_file_path)
+                            except:
+                                pass
+                        else:
+                            # If conversion fails, try to use the original
+                            final_file_path = original_file_path
+                            current_filename = downloaded_file
+                    else:
+                        # Rename to the proper filename if needed
+                        if original_file_path != os.path.join(temp_dir, safe_filename):
+                            try:
+                                os.rename(original_file_path, os.path.join(temp_dir, safe_filename))
+                                final_file_path = os.path.join(temp_dir, safe_filename)
+                                current_filename = safe_filename
+                            except OSError:
                                 final_file_path = original_file_path
                                 current_filename = downloaded_file
-                        else:
-                            # Rename to the proper filename if needed
-                            if original_file_path != os.path.join(temp_dir, safe_filename):
-                                try:
-                                    os.rename(original_file_path, os.path.join(temp_dir, safe_filename))
-                                    final_file_path = os.path.join(temp_dir, safe_filename)
-                                    current_filename = safe_filename
-                                except OSError:
-                                    final_file_path = original_file_path
-                                    current_filename = downloaded_file
-                        
-                        # Verify the file exists and is accessible
-                        if os.path.exists(final_file_path) and os.path.getsize(final_file_path) > 0:
-                            target_path = os.path.join(DOWNLOADS_DIR, current_filename)
-                            
-                            # Handle duplicate filenames
-                            if os.path.exists(target_path):
-                                name, ext = os.path.splitext(current_filename)
-                                counter = 1
-                                while os.path.exists(target_path):
-                                    target_path = os.path.join(DOWNLOADS_DIR, f"{name}_{download_id}_{counter}{ext}")
-                                    counter += 1
-                            
-                            target_name = os.path.basename(target_path)
-                            moved = False
-                            
-                            try:
-                                shutil.move(final_file_path, target_path)
-                                final_file_path = target_path
-                                current_filename = target_name
-                                moved = True
-                            except Exception as move_err:
-                                print(f"Move failed for {final_file_path} -> {target_path}: {move_err}")
-                                current_filename = os.path.basename(final_file_path)
 
-                            if moved and temp_dir and os.path.exists(temp_dir):
-                                shutil.rmtree(temp_dir, ignore_errors=True)
-                                temp_dir = None
+                    # Verify the file exists and is accessible
+                    if os.path.exists(final_file_path) and os.path.getsize(final_file_path) > 0:
+                        target_path = os.path.join(DOWNLOADS_DIR, current_filename)
 
-                            download_progress[download_id] = {
-                                'status': 'finished',
-                                'filename': current_filename,
-                                'file_path': final_file_path,
-                                'temp_dir': temp_dir,
-                                'format_id': format_id,
-                                'completed_at': time.time()
-                            }
-                        else:
-                            download_progress[download_id] = {
-                                'status': 'error',
-                                'error': 'File was created but is empty or inaccessible'
-                            }
+                        # Handle duplicate filenames
+                        if os.path.exists(target_path):
+                            name, ext = os.path.splitext(current_filename)
+                            counter = 1
+                            while os.path.exists(target_path):
+                                target_path = os.path.join(DOWNLOADS_DIR, f"{name}_{download_id}_{counter}{ext}")
+                                counter += 1
+
+                        target_name = os.path.basename(target_path)
+                        moved = False
+
+                        try:
+                            shutil.move(final_file_path, target_path)
+                            final_file_path = target_path
+                            current_filename = target_name
+                            moved = True
+                        except Exception as move_err:
+                            print(f"Move failed for {final_file_path} -> {target_path}: {move_err}")
+                            current_filename = os.path.basename(final_file_path)
+
+                        if moved and temp_dir and os.path.exists(temp_dir):
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                            temp_dir = None
+
+                        download_progress[download_id] = {
+                            'status': 'finished',
+                            'filename': current_filename,
+                            'file_path': final_file_path,
+                            'temp_dir': temp_dir,
+                            'format_id': format_id,
+                            'completed_at': time.time()
+                        }
                     else:
                         download_progress[download_id] = {
                             'status': 'error',
-                            'error': 'Download completed but no files found'
+                            'error': 'File was created but is empty or inaccessible'
                         }
-                
+                else:
+                    download_progress[download_id] = {
+                        'status': 'error',
+                        'error': 'Download completed but no files found'
+                    }
             except yt_dlp.utils.ExtractorError as e:
                 error_msg = str(e)
                 if "Private video" in error_msg:
