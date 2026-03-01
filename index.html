@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Video Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .fps-option {
+            margin-top: 10px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .fps-option label {
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .fps-option select {
+            padding: 5px;
+            border-radius: 3px;
+            border: 1px solid #ccc;
+        }
+        .hidden {
+            display: none;
+        }
+        
+        .loading-formats {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            text-align: center;
+        }
+        
+        .quality-info {
+            font-size: 12px;
+            color: #666;
+            margin-left: 10px;
+        }
+        
+        .fetch-btn {
+            margin-top: 10px;
+            padding: 8px 16px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .fetch-btn:hover {
+            background-color: #218838;
+        }
+        
+        .fetch-btn:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        
+        /* Progress bar animations */
+        @keyframes progressAnimation {
+            0% { width: 0%; }
+            50% { width: 70%; }
+            100% { width: 100%; }
+        }
+        
+        .progress-bar.indeterminate .progress-fill {
+            animation: progressAnimation 2s infinite ease-in-out;
+            width: 0%;
+        }
+        
+        .fetching-progress {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+        }
+        
+        .download-complete {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        
+        .download-complete a {
+            color: #155724;
+            font-weight: bold;
+            text-decoration: underline;
+        }
+        
+        .new-download-btn {
+            margin-top: 15px;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        .new-download-btn:hover {
+            background-color: #0056b3;
+        }
+
+        .play-btn {
+            margin-top: 10px;
+            padding: 10px 20px;
+            background-color: #17a2b8;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 15px;
+        }
+
+        .play-btn:hover {
+            background-color: #138496;
+        }
+
+        .media-preview {
+            margin-top: 10px;
+        }
+
+        .media-preview video, .media-preview audio {
+            width: 100%;
+            border-radius: 8px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎥 Universal Video Downloader</h1>
+            <p>Download videos and audio from YouTube, Facebook, Instagram and more!</p>
+        </header>
+
+        <main>
+            <div class="download-form">
+                <form id="downloadForm">
+                    <div class="form-group">
+                        <label for="url">Video URL:</label>
+                        <input type="url" id="url" name="url" placeholder="https://www.youtube.com/watch?v=... or https://www.facebook.com/..." required>
+                        <small>Supports YouTube, Facebook, Instagram, TikTok, and many more platforms</small>
+                        <button type="button" class="fetch-btn" id="fetchFormatsBtn" onclick="fetchAvailableFormats()">
+                            Fetch Available Formats
+                        </button>
+                    </div>
+
+                    <!-- Loading indicator for format fetching -->
+                    <div class="loading-formats hidden" id="loadingFormats">
+                        <p>🔍 Fetching available formats...</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="formatType">Download Type:</label>
+                        <select id="formatType" name="formatType" onchange="toggleOptions()">
+                            <option value="video">Video</option>
+                            <option value="audio">Audio Only</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="videoOptions">
+                        <div class="option-group">
+                            <label for="videoQuality">Video Quality:</label>
+                            <select id="videoQuality" name="videoQuality" disabled>
+                                <option value="">Click "Fetch Available Formats" first</option>
+                            </select>
+                        </div>
+
+                        <div class="option-group">
+                            <label for="videoFormat">Video Format:</label>
+                            <select id="videoFormat" name="videoFormat">
+                                <option value="mp4" selected>MP4 - Most Compatible</option>
+                                <option value="webm">WebM - Web Optimized</option>
+                                <option value="mkv">MKV - Matroska Container</option>
+                                <option value="mpeg">MPEG - Standard Video</option>
+                                <option value="avi">AVI - Audio Video Interleave</option>
+                                <option value="mov">MOV - QuickTime Format</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group hidden" id="audioOptions">
+                        <div class="option-group">
+                            <label for="audioFormat">Audio Format:</label>
+                            <select id="audioFormat" name="audioFormat">
+                                <option value="mp3" selected>MP3 - Most Compatible</option>
+                                <option value="flac">FLAC - Lossless Quality</option>
+                                <option value="m4a">M4A - Apple Audio</option>
+                                <option value="wav">WAV - Uncompressed</option>
+                                <option value="ogg">OGG - Open Format</option>
+                                <option value="aac">AAC - Advanced Audio</option>
+                                <option value="wma">WMA - Windows Media</option>
+                                <option value="opus">Opus - Modern Codec</option>
+                            </select>
+                        </div>
+                        
+                        <div class="option-group">
+                            <label for="audioQuality">Audio Quality:</label>
+                            <select id="audioQuality" name="audioQuality" disabled>
+                                <option value="">Click "Fetch Available Formats" first</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button type="submit" id="downloadBtn">
+                        <span class="btn-text">Download</span>
+                        <span class="btn-loading hidden">Downloading...</span>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Fetching progress section -->
+            <div class="fetching-progress hidden" id="fetchingSection">
+                <h3>Fetching Video Information</h3>
+                <p>Please wait while we retrieve video details...</p>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="fetchingProgressFill"></div>
+                </div>
+                <div id="fetchingStatus"></div>
+            </div>
+
+            <!-- Download progress section -->
+            <div class="progress-section hidden" id="progressSection">
+                <h3>Download Progress</h3>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-info">
+                    <span id="progressText">0%</span>
+                    <span id="speedText"></span>
+                </div>
+                <div id="downloadStatus"></div>
+            </div>
+            
+            <!-- Download complete section -->
+            <div class="download-complete hidden" id="completeSection">
+                <h3>Download Complete!</h3>
+                <div id="downloadLink"></div>
+                <button class="new-download-btn" onclick="resetForm()">Download Another File</button>
+            </div>
+
+            <div class="supported-sites">
+                <h3>Supported Sites</h3>
+                <div class="sites-grid">
+                    <div class="site-item">🎥 YouTube</div>
+                    <div class="site-item">📘 Facebook</div>
+                    <div class="site-item">📷 Instagram</div>
+                    <div class="site-item">🐦 Twitter</div>
+                    <div class="site-item">📺 Vimeo</div>
+                    <div class="site-item">🎵 SoundCloud</div>
+                    <div class="site-item">📱 TikTok</div>
+                    <div class="site-item">🎬 Dailymotion</div>
+                    <div class="site-item">📦 TeraBox (requires cookies)</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Global variables to track progress intervals
+        let fetchingInterval = null;
+        let progressInterval = null;
+        let availableFormats = null;
+        let lastDownloadType = 'video';
+        let inlinePlayerElement = null;
+        let inlinePlayerTag = null;
+        
+        // Function to fetch available formats from the URL
+        async function fetchAvailableFormats() {
+            const urlInput = document.getElementById('url');
+            const url = urlInput.value.trim();
+            
+            if (!url) {
+                alert('Please enter a video URL first');
+                return;
+            }
+            
+            const fetchBtn = document.getElementById('fetchFormatsBtn');
+            const loadingDiv = document.getElementById('loadingFormats');
+            
+            try {
+                // Show loading state
+                fetchBtn.disabled = true;
+                fetchBtn.textContent = 'Fetching...';
+                loadingDiv.classList.remove('hidden');
+                
+                const response = await fetch('/get_formats', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    availableFormats = data;
+                    populateFormatSelectors(data);
+                    alert(`Successfully fetched ${data.video_formats.length} video formats and ${data.audio_formats.length} audio formats!`);
+                } else {
+                    alert('Error fetching formats: ' + data.error);
+                }
+                
+            } catch (error) {
+                alert('Error fetching formats: ' + error.message);
+            } finally {
+                // Reset button state
+                fetchBtn.disabled = false;
+                fetchBtn.textContent = 'Fetch Available Formats';
+                loadingDiv.classList.add('hidden');
+            }
+        }
+        
+        // Function to populate format selectors with fetched data
+        function populateFormatSelectors(formats) {
+            const videoQualitySelect = document.getElementById('videoQuality');
+            const audioQualitySelect = document.getElementById('audioQuality');
+            
+            // Clear existing options
+            videoQualitySelect.innerHTML = '';
+            audioQualitySelect.innerHTML = '';
+            
+            // Populate video formats
+            if (formats.video_formats && formats.video_formats.length > 0) {
+                videoQualitySelect.disabled = false;
+                
+                formats.video_formats.forEach(format => {
+                    const option = document.createElement('option');
+                    option.value = format.format_id;
+                    
+                    let displayText = '';
+                    if (format.height) {
+                        displayText = `${format.height}p`;
+                        if (format.fps && format.fps > 30) {
+                            displayText += ` (${format.fps}fps)`;
+                        }
+                    } else {
+                        displayText = format.format_note || format.format_id;
+                    }
+                    
+                    if (format.filesize_approx) {
+                        const sizeMB = Math.round(format.filesize_approx / (1024 * 1024));
+                        displayText += ` - ~${sizeMB}MB`;
+                    }
+                    
+                    if (format.ext) {
+                        displayText += ` (${format.ext})`;
+                    }
+                    
+                    option.textContent = displayText;
+                    videoQualitySelect.appendChild(option);
+                });
+                
+                // Select the best quality by default (first option)
+                if (videoQualitySelect.options.length > 0) {
+                    videoQualitySelect.selectedIndex = 0;
+                }
+            } else {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No video formats available';
+                videoQualitySelect.appendChild(option);
+                videoQualitySelect.disabled = true;
+            }
+            
+            // Populate audio formats
+            if (formats.audio_formats && formats.audio_formats.length > 0) {
+                audioQualitySelect.disabled = false;
+                
+                formats.audio_formats.forEach(format => {
+                    const option = document.createElement('option');
+                    option.value = format.format_id;
+                    
+                    let displayText = '';
+                    if (format.abr) {
+                        displayText = `${format.abr}kbps`;
+                    } else if (format.format_note) {
+                        displayText = format.format_note;
+                    } else {
+                        displayText = format.format_id;
+                    }
+                    
+                    if (format.filesize_approx) {
+                        const sizeMB = Math.round(format.filesize_approx / (1024 * 1024));
+                        displayText += ` - ~${sizeMB}MB`;
+                    }
+                    
+                    if (format.ext) {
+                        displayText += ` (${format.ext})`;
+                    }
+                    
+                    option.textContent = displayText;
+                    audioQualitySelect.appendChild(option);
+                });
+                
+                // Select the best quality by default (first option)
+                if (audioQualitySelect.options.length > 0) {
+                    audioQualitySelect.selectedIndex = 0;
+                }
+            } else {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No audio formats available';
+                audioQualitySelect.appendChild(option);
+                audioQualitySelect.disabled = true;
+            }
+        }
+        
+        // Function to toggle between video and audio options
+        function toggleOptions() {
+            const formatType = document.getElementById('formatType').value;
+            const videoOptions = document.getElementById('videoOptions');
+            const audioOptions = document.getElementById('audioOptions');
+            
+            if (formatType === 'video') {
+                videoOptions.classList.remove('hidden');
+                audioOptions.classList.add('hidden');
+            } else {
+                videoOptions.classList.add('hidden');
+                audioOptions.classList.remove('hidden');
+            }
+        }
+
+        // Reset the form to initial state
+        function resetForm() {
+            // Clear any active intervals
+            if (fetchingInterval) clearInterval(fetchingInterval);
+            if (progressInterval) clearInterval(progressInterval);
+            
+            // Reset form fields
+            document.getElementById('url').value = '';
+            document.getElementById('formatType').value = 'video';
+            
+            // Reset format selectors
+            const videoQualitySelect = document.getElementById('videoQuality');
+            const audioQualitySelect = document.getElementById('audioQuality');
+            
+            videoQualitySelect.innerHTML = '<option value="">Click "Fetch Available Formats" first</option>';
+            audioQualitySelect.innerHTML = '<option value="">Click "Fetch Available Formats" first</option>';
+            videoQualitySelect.disabled = true;
+            audioQualitySelect.disabled = true;
+            
+            // Reset other selectors
+            document.getElementById('videoFormat').value = 'mp4';
+            document.getElementById('audioFormat').value = 'mp3';
+            
+            // Reset progress bars
+            document.getElementById('fetchingProgressFill').style.width = '0%';
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('progressText').textContent = '0%';
+            document.getElementById('speedText').textContent = '';
+            
+            // Reset status messages
+            document.getElementById('fetchingStatus').textContent = '';
+            document.getElementById('downloadStatus').textContent = '';
+            document.getElementById('downloadLink').innerHTML = '';
+            
+            // Hide all progress sections and show the form
+            hideAllProgress();
+            document.getElementById('completeSection').classList.add('hidden');
+            document.getElementById('downloadForm').classList.remove('hidden');
+            document.getElementById('loadingFormats').classList.add('hidden');
+            
+            // Reset button state
+            document.getElementById('downloadBtn').classList.remove('loading');
+            document.getElementById('fetchFormatsBtn').disabled = false;
+            document.getElementById('fetchFormatsBtn').textContent = 'Fetch Available Formats';
+            
+            // Reset options visibility
+            toggleOptions();
+            
+            // Clear available formats
+            availableFormats = null;
+            lastDownloadType = 'video';
+            inlinePlayerElement = null;
+            inlinePlayerTag = null;
+        }
+
+        // Fake fetching progress for 5 seconds
+        function startFakeFetchingProgress() {
+            const fetchingProgressFill = document.getElementById('fetchingProgressFill');
+            const fetchingStatus = document.getElementById('fetchingStatus');
+            
+            let progress = 0;
+            const duration = 6000; // 6 seconds
+            const interval = 50; // Update every 50ms
+            const increment = (interval / duration) * 100;
+            
+            fetchingInterval = setInterval(() => {
+                progress += increment;
+                if (progress >= 100) {
+                    progress = 100;
+                    clearInterval(fetchingInterval);
+                    fetchingStatus.textContent = "Video information retrieved successfully!";
+                    
+                    // Hide fetching section and show download progress after fake progress completes
+                    setTimeout(() => {
+                        document.getElementById('fetchingSection').classList.add('hidden');
+                        document.getElementById('progressSection').classList.remove('hidden');
+                    }, 500);
+                }
+                
+                fetchingProgressFill.style.width = progress + '%';
+                fetchingStatus.textContent = `Fetching... ${Math.round(progress)}%`;
+            }, interval);
+        }
+
+        // Show fetching progress
+        function showFetchingProgress() {
+            document.getElementById('fetchingSection').classList.remove('hidden');
+            document.getElementById('progressSection').classList.add('hidden');
+            document.getElementById('completeSection').classList.add('hidden');
+        }
+
+        // Show download progress
+        function showDownloadProgress() {
+            document.getElementById('fetchingSection').classList.add('hidden');
+            document.getElementById('progressSection').classList.remove('hidden');
+            document.getElementById('completeSection').classList.add('hidden');
+        }
+
+        // Show complete section
+        function showCompleteSection(downloadId, filename) {
+            document.getElementById('fetchingSection').classList.add('hidden');
+            document.getElementById('progressSection').classList.add('hidden');
+            document.getElementById('completeSection').classList.remove('hidden');
+
+            const safeDownloadId = encodeURIComponent(downloadId);
+            const container = document.getElementById('downloadLink');
+            container.innerHTML = '';
+
+            const infoParagraph = document.createElement('p');
+            const link = document.createElement('a');
+            link.href = `/download_file/${safeDownloadId}`;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = `Download ${filename || 'file'}`;
+            infoParagraph.appendChild(document.createTextNode('Your download is ready: '));
+            infoParagraph.appendChild(link);
+            container.appendChild(infoParagraph);
+
+            const playButton = document.createElement('button');
+            playButton.className = 'play-btn';
+            playButton.textContent = 'Play now';
+            playButton.addEventListener('click', () => playInline(safeDownloadId));
+            container.appendChild(playButton);
+
+            const playerHolder = document.createElement('div');
+            playerHolder.id = 'inlinePlayer';
+            playerHolder.className = 'media-preview hidden';
+            container.appendChild(playerHolder);
+        }
+
+        function playInline(downloadId) {
+            const player = document.getElementById('inlinePlayer');
+            if (!player) return;
+            player.classList.remove('hidden');
+            const useAudio = lastDownloadType === 'audio';
+            const expectedTag = useAudio ? 'audio' : 'video';
+            if (!inlinePlayerElement || inlinePlayerTag !== expectedTag) {
+                player.innerHTML = '';
+                inlinePlayerElement = document.createElement(expectedTag);
+                inlinePlayerElement.controls = true;
+                if (!useAudio) {
+                    inlinePlayerElement.playsInline = true;
+                }
+                inlinePlayerElement.style.width = '100%';
+                player.appendChild(inlinePlayerElement);
+                inlinePlayerTag = expectedTag;
+            }
+            inlinePlayerElement.src = `/play_file/${downloadId}`;
+            inlinePlayerElement.load();
+        }
+
+        // Hide all progress indicators
+        function hideAllProgress() {
+            document.getElementById('fetchingSection').classList.add('hidden');
+            document.getElementById('progressSection').classList.add('hidden');
+            document.getElementById('completeSection').classList.add('hidden');
+        }
+
+        // Function to monitor download progress
+        function monitorProgress(downloadId) {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            const speedText = document.getElementById('speedText');
+            const downloadStatus = document.getElementById('downloadStatus');
+            
+            // Poll for progress updates
+            progressInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/progress/${downloadId}`);
+                    const data = await response.json();
+                    
+                    if (data.status === 'finished') {
+                        clearInterval(progressInterval);
+                        progressFill.style.width = '100%';
+                        progressText.textContent = '100%';
+                        
+                        // Show complete section with download link
+                        showCompleteSection(downloadId, data.filename);
+                    } else if (data.status === 'downloading') {
+                        // Extract percentage from string like "12.3%"
+                        const percentMatch = data.percent.match(/(\d+\.?\d*)%/);
+                        const progress = percentMatch ? parseFloat(percentMatch[1]) : 0;
+                        
+                        progressFill.style.width = progress + '%';
+                        progressText.textContent = data.percent;
+                        speedText.textContent = data.speed ? `Speed: ${data.speed}` : '';
+                    } else if (data.status === 'processing') {
+                        progressText.textContent = data.message || 'Processing...';
+                    } else if (data.status === 'error') {
+                        clearInterval(progressInterval);
+                        downloadStatus.textContent = 'Error: ' + data.error;
+                        document.getElementById('downloadBtn').classList.remove('loading');
+                        hideAllProgress();
+                        alert('Download error: ' + data.error);
+                    } else if (data.status === 'not_found') {
+                        // Download not started yet, keep waiting
+                        console.log('Download not started yet...');
+                    }
+                } catch (error) {
+                    console.error('Error checking progress:', error);
+                }
+            }, 1000);
+        }
+
+        // The actual download function that sends the request to the server
+        async function startActualDownload() {
+            const url = document.getElementById('url').value;
+            const formatType = document.getElementById('formatType').value;
+            
+            if (!availableFormats) {
+                alert('Please fetch available formats first');
+                return;
+            }
+            
+            let selectedFormatId;
+            if (formatType === 'video') {
+                selectedFormatId = document.getElementById('videoQuality').value;
+            } else {
+                selectedFormatId = document.getElementById('audioQuality').value;
+            }
+            
+            if (!selectedFormatId) {
+                alert('Please select a format');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        url,
+                        format_type: formatType,
+                        format_id: selectedFormatId,
+                        output_format: formatType === 'video' ? document.getElementById('videoFormat').value : document.getElementById('audioFormat').value
+                    }),
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    const downloadId = data.download_id;
+                    // Start monitoring the actual download progress
+                    monitorProgress(downloadId);
+                } else {
+                    alert('Error: ' + data.error);
+                    document.getElementById('downloadBtn').classList.remove('loading');
+                    hideAllProgress();
+                }
+            } catch (error) {
+                alert('Error starting download: ' + error.message);
+                document.getElementById('downloadBtn').classList.remove('loading');
+                hideAllProgress();
+            }
+        }
+
+        // Main download function that starts both processes simultaneously
+        async function startDownload() {
+            if (!availableFormats) {
+                alert('Please fetch available formats first');
+                return;
+            }
+
+            lastDownloadType = document.getElementById('formatType').value;
+            
+            // Hide the form and show loading state
+            document.getElementById('downloadForm').classList.add('hidden');
+            document.getElementById('downloadBtn').classList.add('loading');
+            showFetchingProgress();
+            
+            // Start BOTH processes at the same time:
+            // 1. Fake fetching progress (UI animation)
+            startFakeFetchingProgress();
+            
+            // 2. Actual download request to server
+            startActualDownload();
+        }
+
+        // Update the form submission
+        document.getElementById('downloadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            startDownload();
+        });
+
+        // Initialize the page
+        toggleOptions();
+    </script>
+</body>
+</html>
