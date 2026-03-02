@@ -19,7 +19,8 @@ import trabox
 
 app = Flask(__name__)
 
-# Store download progress and file information
+# Semaphore to allow only one FFmpeg conversion at a time (protects RAM on low-memory servers)
+conversion_semaphore = threading.Semaphore(1)
 download_progress = {}
 
 # Configure cookies folder
@@ -49,7 +50,7 @@ MP4_COMPATIBLE_ARGS = [
 # Additional args for social media platforms
 SOCIAL_MEDIA_ARGS = [
     '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',  # Ensure dimensions are even
-    '-preset', 'fast',                            # Faster encoding
+    '-preset', 'ultrafast',                        # Minimal RAM usage
     '-crf', '23'                                   # Good quality/size balance
 ]
 
@@ -289,8 +290,8 @@ def ensure_compatible_video(input_path, output_path, platform):
         # Build ffmpeg command for maximum compatibility
         cmd = ['ffmpeg', '-i', input_path]
         
-        # Limit to 2 threads to keep CPU usage low
-        cmd.extend(['-threads', '2'])
+        # Use a single thread to keep RAM usage minimal on low-memory servers
+        cmd.extend(['-threads', '1'])
 
         # Add video codec settings for H264 baseline profile
         cmd.extend([
@@ -298,8 +299,9 @@ def ensure_compatible_video(input_path, output_path, platform):
             '-profile:v', 'baseline',
             '-level', '3.0',
             '-pix_fmt', 'yuv420p',
-            '-preset', 'fast',
-            '-crf', '23'
+            '-preset', 'ultrafast',  # Minimal RAM/CPU usage
+            '-crf', '23',
+            '-max_muxing_queue_size', '512',  # Prevent muxing queue memory bloat
         ])
         
         # Ensure dimensions are even (required for H264)
@@ -319,8 +321,12 @@ def ensure_compatible_video(input_path, output_path, platform):
         # Overwrite output file if exists
         cmd.extend(['-y', output_path])
         
-        # Run ffmpeg
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Only allow one FFmpeg conversion at a time to protect RAM.
+        # The context manager guarantees the semaphore is released even if
+        # subprocess.TimeoutExpired is raised inside the block.
+        with conversion_semaphore:
+            # Run ffmpeg with a hard timeout (10 minutes) to avoid server hangs
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         
         if result.returncode == 0 and os.path.exists(output_path):
             return True
@@ -328,6 +334,9 @@ def ensure_compatible_video(input_path, output_path, platform):
             print(f"FFmpeg error: {result.stderr}")
             return False
             
+    except subprocess.TimeoutExpired:
+        print("FFmpeg conversion timed out after 600 seconds")
+        return False
     except Exception as e:
         print(f"Error during video compatibility conversion: {e}")
         return False
@@ -660,6 +669,9 @@ def perform_download(download_id, url, format_type, format_id, output_format, co
             'merge_output_format': output_format,
             'prefer_ffmpeg': True,
             'concurrent_fragment_downloads': 1,  # Limit parallel fragment downloads (saves RAM/CPU)
+            'buffersize': 1024 * 64,             # 64 KB download buffer (balances RAM and I/O efficiency)
+            'http_chunk_size': 1024 * 1024 * 10, # 10 MB HTTP chunks to avoid large in-memory buffers
+            'socket_timeout': 30,                 # Prevent hung connections from stalling the server
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             },
